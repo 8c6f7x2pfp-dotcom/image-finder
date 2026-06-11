@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Image Finder</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color: #fff;
+      background: linear-gradient(135deg, #ff7a18, #af002d 70%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: rgba(0,0,0,0.25);
+      padding: 1.25rem;
+      border-radius: 10px;
+      width: min(1100px, 96%);
+    }
+    header { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+    .search { flex:1; display:flex; gap:8px; }
+    input[type="search"]{flex:1;padding:10px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.03);color:#fff}
+    button{padding:10px 14px;border-radius:6px;border:none;background:#222;color:#fff;cursor:pointer}
+    label.small{font-size:0.85rem;color:#eee}
+    .controls{display:flex;gap:12px;align-items:center}
+    .suggestions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+    .suggestions button{padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer}
+    .results{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+    .tile{background:#111;border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+    .tile img{width:100%;height:140px;object-fit:cover;display:block}
+    .tile p{margin:8px;padding:0 8px 12px 8px;color:#ddd;font-size:0.9rem}
+    .empty{padding:2rem;text-align:center;color:#ddd}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:24px}
+    .modal .frame{background:#000;padding:12px;border-radius:8px;max-width:90vw;max-height:90vh}
+    .modal img{max-width:100%;max-height:80vh;display:block}
+    .row{display:flex;gap:8px;align-items:center}
+    .history{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+    .history button{padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer}
+    .history .clear-history{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.25);}
+    @media (max-width:520px){ .tile img{height:110px} }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <header>
+      <div class="search">
+        <input id="q" type="search" placeholder="Type anything to search for images" autocomplete="on" list="history-list" />
+        <button id="go">Search</button>
+      </div>
+      <div class="controls">
+        <button id="clear">Clear</button>
+        <button id="generate">Random Images</button>
+      </div>
+    </header>
+    <datalist id="history-list"></datalist>
+    <main>
+      <div id="status" class="small">Tip: type anything (animals, places, objects, etc.) and click Search to find matching images from the internet.</div>
+      <div id="history" class="history"></div>
+      <div id="results" class="results" style="margin-top:12px"></div>
+      <div id="empty" class="empty" style="display:none">No results yet. Try searching for anything!</div>
+      <div id="canvasContainer" style="margin-top:16px; text-align:center; display:none">
+        <canvas id="cr7canvas" width="600" height="400" style="border:1px solid rgba(255,255,255,0.18);border-radius:8px;background:#111"></canvas>
+      </div>
+    </main>
+    <div id="modal" style="display:none" class="modal" role="dialog"></div>
+  </div>
+
+  <script>
+    const localData = [
+      {title:'Orange Sunset',tags:['sunset','orange','sky'],url:'https://images.unsplash.com/photo-1501973801540-537f08ccae7b?auto=format&fit=crop&w=800&q=60'},
+      {title:'Mountain Lake',tags:['mountain','lake','nature'],url:'https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=800&q=60'},
+      {title:'Cute Cat',tags:['cat','pet','cute'],url:'https://images.unsplash.com/photo-1518791841217-8f162f1e1131?auto=format&fit=crop&w=800&q=60'},
+      {title:'City Logo Mockup',tags:['logo','design','city'],url:'https://images.unsplash.com/photo-1519337265831-281ec6cc8514?auto=format&fit=crop&w=800&q=60'},
+      {title:'Forest Path',tags:['forest','trees','nature'],url:'https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=800&q=60'}
+    ];
+
+    const qInput = document.getElementById('q');
+    const go = document.getElementById('go');
+    const results = document.getElementById('results');
+    const empty = document.getElementById('empty');
+    const clear = document.getElementById('clear');
+    const status = document.getElementById('status');
+    const historyEl = document.getElementById('history');
+    const modal = document.getElementById('modal');
+
+    function renderTiles(items){
+      results.innerHTML='';
+      if(!items.length){ empty.style.display='block'; return }
+      empty.style.display='none';
+      for(const it of items){
+        const tile = document.createElement('div'); tile.className='tile';
+        const img = document.createElement('img'); 
+        img.alt = it.title || '';
+        img.loading = 'lazy';
+        img.src = it.url;
+        const p = document.createElement('p'); p.textContent = it.title || '';
+        tile.appendChild(img); tile.appendChild(p);
+        tile.addEventListener('click', ()=> showModal(it));
+        results.appendChild(tile);
+      }
+    }
+
+    function showModal(item){
+      modal.innerHTML = `<div class="frame"><img src="${item.url}" alt="${item.title||''}" /><p style="color:#fff;margin:8px 0 0">${item.title||''}</p><div style="text-align:right;margin-top:6px"><button id=close>Close</button></div></div>`;
+      modal.style.display='flex';
+      document.getElementById('close').onclick = ()=> modal.style.display='none';
+    }
+
+    function isImageUrl(value){
+      try {
+        const url = new URL(value);
+        return /(\.png|\.jpg|\.jpeg|\.gif|\.webp|\.avif|\.svg)$/i.test(url.pathname) || url.hostname.includes('images.unsplash.com') || url.hostname.includes('source.unsplash.com');
+      } catch {
+        return false;
+      }
+    }
+
+    function searchLocal(q){
+      q = q.trim().toLowerCase();
+      if(!q) return [];
+      return localData.filter(it => (it.title+ ' '+ it.tags.join(' ')).toLowerCase().includes(q));
+    }
+
+    function getSearchQuery(q){
+      return q.trim();
+    }
+
+    async function searchLive(q,count=3){
+      const items = [];
+      const searchTerm = getSearchQuery(q).trim();
+      
+      // Snelle directe aanpak: kleinere LoremFlickr-afbeeldingen
+      for(let i=0;i<count;i++){
+        items.push({
+          title: searchTerm,
+          url: `https://loremflickr.com/300/220/${encodeURIComponent(searchTerm.split(' ').join(','))}?lock=${i}`
+        });
+      }
+      
+      return items;
+    }
+
+    async function generateSoccerImages(){
+      const randomQueries = ['nature', 'animals', 'landscape', 'ocean', 'mountains', 'city', 'flowers', 'space', 'architecture', 'food'];
+      const query = randomQueries[Math.floor(Math.random() * randomQueries.length)];
+      qInput.value = query;
+      status.textContent = 'Loading random images from the internet...';
+      saveSearchHistory(query);
+      const items = await searchLive(query, 3);
+      renderTiles(items);
+    }
+
+    function getSearchHistory(){
+      const raw = localStorage.getItem('imageFinderHistory');
+      try {
+        const list = JSON.parse(raw || '[]');
+        return Array.isArray(list) ? list : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveSearchHistory(query){
+      const value = query.trim();
+      if(!value) return;
+      const list = getSearchHistory().filter(item => item.toLowerCase() !== value.toLowerCase());
+      list.unshift(value);
+      if(list.length > 10) list.length = 10;
+      localStorage.setItem('imageFinderHistory', JSON.stringify(list));
+      renderHistory();
+    }
+
+    function clearSearchHistory(){
+      localStorage.removeItem('imageFinderHistory');
+      renderHistory();
+    }
+
+    function renderHistory(){
+      const items = getSearchHistory();
+      const datalist = document.getElementById('history-list');
+      if(!items.length){
+        historyEl.innerHTML = '<div class="empty">Search history is empty.</div>';
+        datalist.innerHTML = '';
+        return;
+      }
+      historyEl.innerHTML = `<strong style="display:block;margin-bottom:8px;color:#fff">Search history:</strong>` + items.map(term => `<button type="button" data-term="${term}">${term}</button>`).join('') + '<button id="clearHistory" type="button" class="clear-history">Clear history</button>';
+      datalist.innerHTML = items.map(term => `<option value="${term}"></option>`).join('');
+      historyEl.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if(btn.id === 'clearHistory'){
+            clearSearchHistory();
+          } else {
+            qInput.value = btn.dataset.term;
+            doSearch();
+          }
+        });
+      });
+    }
+
+    function drawCR7Graphic(){
+      const canvas = document.getElementById('cr7canvas');
+      const ctx = canvas.getContext('2d');
+      if(!ctx) return;
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+      const bg = ctx.createLinearGradient(0, 0, w, h);
+      bg.addColorStop(0, '#051021');
+      bg.addColorStop(1, '#0e2138');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+
+      const glow = ctx.createRadialGradient(w * 0.5, h * 0.4, 10, w * 0.5, h * 0.4, 180);
+      glow.addColorStop(0, 'rgba(255,255,255,0.22)');
+      glow.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.save();
+      ctx.translate(w * 0.5, h * 0.55);
+      ctx.rotate(-0.16);
+      ctx.fillStyle = '#d4af37';
+      ctx.fillRect(-w * 0.6, -h * 0.1, w * 1.2, h * 0.14);
+      ctx.restore();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 120px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('CR7', w * 0.5, h * 0.35);
+
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 210px system-ui, sans-serif';
+      ctx.fillText('7', w * 0.5, h * 0.72);
+
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = '24px system-ui, sans-serif';
+      ctx.fillText('Cristiano Ronaldo', w * 0.5, h - 26);
+    }
+
+    function showCanvas(){
+      document.getElementById('canvasContainer').style.display = 'block';
+      drawCR7Graphic();
+    }
+
+    async function doSearch(){
+      const q = qInput.value.trim();
+      if(!q){ results.innerHTML=''; empty.style.display='block'; return }
+      const searchTerm = q;
+      status.textContent = `Loading images for "${searchTerm}"...`;
+      saveSearchHistory(searchTerm);
+      results.innerHTML = '<div class="empty">Loading…</div>';
+      if(isImageUrl(q)){
+        renderTiles([{ title: q, url: q }]);
+        return;
+      }
+      const items = await searchLive(searchTerm, 3);
+      renderTiles(items);
+    }
+
+    go.addEventListener('click', doSearch);
+    qInput.addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
+    clear.addEventListener('click', ()=>{ qInput.value=''; results.innerHTML=''; empty.style.display='block'; document.getElementById('canvasContainer').style.display='none'; status.textContent = 'Tip: type anything (animals, places, objects, etc.) and click Search to find matching images from the internet.'; });
+    document.getElementById('generate').addEventListener('click', generateSoccerImages);
+    modal.addEventListener('click', (e)=>{ if(e.target===modal) modal.style.display='none' });
+    renderHistory();
+    // initial placeholder
+    empty.style.display='block';
+  </script>
+</body>
+</html>
